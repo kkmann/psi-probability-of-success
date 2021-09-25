@@ -1,3 +1,7 @@
 *.Rproj.user
-psi-sample-size-uncertainty.Rproj
+settings.Rproj
 .Rproj.user
+
+libs
+slides_files
+slides.html
