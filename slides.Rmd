@@ -1,0 +1,667 @@
+---
+title:    "Sample Size Calculation"
+subtitle: "a closer look at 'hybrid' methods"
+author:   "K Kunzmann, M Grayling, KM Lee, <br /> D Robertson, K Rufibach, JMS Wason"
+date:     "2020/11/04 (updated: `r Sys.Date()`)"
+output:
+  xaringan::moon_reader:
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+    css: ["default", "custom.css", "hygge"]
+header-includes:
+    - \usepackage{tikz,pgf,arrows,automata,positioning,fit}
+---
+class: inverse, bottom, right
+background-image: url("images/people-crossing.jpg")
+# How many?
+
+```{r setup, include=FALSE}
+library(tidyverse)
+
+source("R/prior.R")
+source("R/functions.R")
+
+alpha <- .025
+ crit <- 1.96
+```
+
+
+
+---
+background-image: url("images/42-will-do.jpg")
+
+
+
+---
+## Preliminaries
+
+* simple one-arm Wald test with test statistic 
+
+    $Z_n := \frac{\displaystyle \widehat{\theta}_n -\theta_0}{\operatorname{SE}\big[\widehat{\theta}_n\big]}$
+    
+* w.l.o.g. $\theta_0 = 0$, $\mathcal{H}_0 = \theta \leq 0$, and effect size standardized
+
+* assume that $\operatorname{SE}\big[\widehat{\theta}_n\big]$ is deterministic function of $n$ <br /> 
+(think: $\sigma$ known in the case of $\theta$ being the mean of a normal distribution)
+
+* maximal one-sided type one error rate is externally given as $\alpha=0.025$ <br />
+(i.e. critical value is 1.96, reject $\mathcal{H}_0 \Leftrightarrow Z_n > 1.96$ )
+
+* everything generalizes to 
+    * multi-arm comparisons
+    * asymptotically normal test statistics (hazard ratios!) 
+    * etc.
+
+
+
+---
+## Standard Approach
+
+* probability to reject [1], $\operatorname{Pr}_\theta[Z_n > 1.96]$, is a function of $\theta$ and $n$ 
+    
+* pick point alternative $\theta_{alt}>0$ and acceptable type-two error rate $\beta$
+
+* chose smallest $n$ such that $\operatorname{Pr}_{\theta_{alt}}[Z_n > 1.96] = 1 - \beta$
+
+* $n$ is monotone function of $\theta_{alt}$: if $\theta_{alt}\nearrow$ then $n\searrow$
+
+* in the following: $\beta=0.2$, i.e. we aim for 80% power
+
+* for $n=42$ this works if $\theta_{alt} \approx `r uniroot(function(theta) power(theta, 42, crit) - 0.8, interval = c(.3, .5))$root %>% round(2)`$
+
+.footnote[
+[1] determining the sample size via power arguments is common but not the only criterion, could also use width of confidence interval, utility, ...
+]
+
+--
+
+<br/>
+
+.center[.content-box-red[wait, where does the point alternative come from?]]
+
+
+
+
+
+---
+## Choice of Point Alternative
+
+
+.pull-left[
+### MCID
+
+* Minimal Clinically Important Difference (MCID)
+
+* externally given
+
+* $\theta\geq\theta_{\operatorname{MCID}}: \operatorname{Pr}_\theta[Z_n > 1.96] \geq 1 - \beta$ <br/>
+    i.e. all relevant effects are detected with minimum power (due to monotonicity) 
+
+* expensive: $n\to\infty$ as $\theta_{\operatorname{MCID}}\to0$
+
+]
+
+
+.pull-right[
+### 'likely' alternative
+
+* sometimes it is 'very likely' that 
+    $$\theta>>\theta_{\operatorname{MCID}}$$
+
+* deriving $n$ from $\theta_{\operatorname{MCID}}$ is ineffective
+
+* $\leadsto$ consider all $\theta \geq \theta_{\operatorname{MCID}}$ and their
+'relative likelihood'
+
+* **what is 'relative likelihood'?**
+
+]
+
+
+
+---
+## 'Power Plays'
+
+```{r echo=FALSE, fig.width=8, fig.height=5, out.width="700px", dpi=150}
+theta_mcid <- 0.1
+n_mcid <- ceiling(uniroot(function(n) power(theta_mcid, n, crit) - 0.8, interval = c(50, 1000))$root)
+
+n <- 42
+theta_alt  <- uniroot(function(theta) power(theta, 42, crit) - 0.8, interval = c(.3, .5))$root
+
+tbl_plot <- tibble(
+         theta = seq(-0.1, .5, length.out = 100),
+        likely = map_dbl(theta, ~power(., n, crit)),
+          MCID = map_dbl(theta, ~power(., n_mcid, crit)),
+    ) %>%
+    pivot_longer(
+        -theta, names_to = "point alternative", values_to = "probability to reject null"
+    ) %>%
+    mutate(
+        `point alternative` = str_replace(`point alternative`, "likely", sprintf("likely (n = %i)", n)) %>%
+            str_replace("MCID", sprintf("MCID (n = %i)", n_mcid))
+    )
+ggplot(tbl_plot) +
+    aes(theta, `probability to reject null`) +
+    geom_vline(xintercept = 0) +
+    geom_vline(xintercept = theta_mcid) +
+    geom_vline(xintercept = theta_alt) +
+    geom_line(aes(color = `point alternative`)) +
+    scale_x_continuous(
+        expression(theta), breaks = seq(-.2, 1.0, by = .1), expand = expansion(mult = 0, add = 0.005)
+    ) +
+    scale_y_continuous(
+        "probability to reject null", breaks = seq(0, 1.0, by = .1), expand = expansion(mult = 0, add = 0.01)
+    ) +
+    theme_minimal() +
+    theme(
+        panel.grid.minor = element_blank(),
+        legend.position = "top"
+    )
+```
+
+
+
+
+---
+## 'Hybrid' Approaches
+
+* 'hybrid' between **Bayesian** and **frequentist** methods<sup>1</sup>
+
+* model unknown parameter as random variable $\Theta$
+
+* uses prior distribution to quantify planning uncertainty about $\Theta$
+
+$$\operatorname{Pr}[\Theta \leq x] = \int^x \underbrace{\varphi(\theta)}_{\text{prior density}} \operatorname{d}\theta$$
+
+* $\varphi(\theta)$ is **weight function** encoding 'relative likelihood' values of $\theta$
+
+* final analysis remains entirely frequentist!
+
+
+.footnote[
+[1] not really Bayesian since Bayes Theorem is never invoked!
+]
+
+
+
+---
+
+```{r, echo=FALSE, fig.width=15, fig.height=10, out.with="100%"}
+set.seed(42)
+tbl_words <- tibble(
+    word = c(
+        "assurance",
+        "probability of success",
+        "predictive probability of success",
+        "average probability of success",
+        "probability of statistical success",
+        "probability of study success",
+        "predictive power",
+        "predictive frequentist power",
+        "average power",
+        "strength",
+        "extended Bayesian expected power 1",
+        "hybrid Neyman-Pearson-Bayesian probability",
+        "prior-adjusted power"
+    ),
+    freq = sample(5:15, size = length(word), replace = TRUE)
+)
+wordcloud::wordcloud(
+    tbl_words$word, 
+    tbl_words$freq, 
+    colors = RColorBrewer::brewer.pal(8, "Dark2"),
+    rot.per = .0,
+    random.color = TRUE
+)
+```
+
+* see [https://arxiv.org/abs/2006.15715] for extensive literature review
+
+
+---
+class:: inverse, middle, center
+# 'Bayesian' Point Alternative
+
+
+
+---
+## Justify Point Alternative
+
+* *"[...] a somewhat arbitrarily chosen location parameter of the [prior] distribution (for example the mean, the median or the 70th percentile) [...]"* could be used to determine $n$ [1]
+
+* simply Bayesian justification of the choice of point alternative $\theta_{alt}$
+
+* naive: $\theta_{alt}=\operatorname{E}[\Theta]$
+
+* problems:
+    
+    1. probability to reject is non-linear function of effect size!
+    $$\underbrace{\operatorname{Pr}_{\operatorname{E}[\Theta]}[Z_n > 1.96]}_{\text{probability to reject at expected effect}} \neq \underbrace{\operatorname{E}\big[\operatorname{Pr}_\Theta[Z_n > 1.96]\big]}_{\text{expected probability to reject}}$$
+    
+    2. $\operatorname{E}[\Theta]$ may lie in $\mathcal{H}_0 \ \leadsto$ required sample size undefined 
+
+.footnote[
+    [1] D J Spiegelhalter and L S Freedman. A predictive approach to selecting the size of a clinical trial, based onsubjective clinical opinion.Statistics in Medicine, 5(1):1–13, 1986.
+]
+
+
+---
+## Prior-Quantile Approach (1)
+
+* use $(1-\gamma)$-quantile of the prior distribution *conditional* on a relevant effect:
+    $$\operatorname{Q}_{1-\gamma}[\Theta \ | \ \Theta \geq \theta_{\operatorname{MCID}} ] := \inf_x Pr\big[\Theta \geq x \ | \ \Theta \geq \theta_{\operatorname{MCID}}] \geq \gamma$$
+    
+* *" $\operatorname{Q}_{1-\gamma}[\Theta \ | \ \Theta \geq \theta_{\operatorname{MCID}} ]$ is the 
+$\theta$ such that $\operatorname{Pr}[\Theta\geq\theta]=\gamma$ "*
+    
+* chose $n$ such that power at $\theta_{alt}=\operatorname{Q}_{1-\gamma}[\Theta \ | \ \Theta \geq \theta_{\operatorname{MCID}}]$ is 80%
+
+* $\operatorname{Q}_{1-\gamma}[\Theta \ | \ \Theta \geq \theta_{\operatorname{MCID}}] \geq \theta_{\operatorname{MCID}} \leadsto$ sample size always well-defined
+
+<br />
+
+--
+
+$\leadsto$ nothing but a more formal way of justifying $\theta_{alt} \geq \theta_{\operatorname{MCID}}$
+
+$\leadsto$ compatible with all sample size formulas!
+
+
+
+---
+## Prior-Quantile Approach (2)
+
+* how is that better than using $\theta_{alt}=\operatorname{E}[\Theta\ | \ \Theta \geq \theta_{\operatorname{MCID}}]$ ? 
+
+* recall that 
+$$\underbrace{\operatorname{Pr}_{\operatorname{E}[\Theta]}[Z_n > 1.96]}_{\text{probability to reject at expected effect}} \neq \underbrace{\operatorname{E}\big[\operatorname{Pr}_\Theta[Z_n > 1.96]\big]}_{\text{expected probability to reject}}$$
+
+* $\theta \mapsto \operatorname{Pr}_\theta[Z_n > 1.96]$ is monotononously increasing, thus
+
+$$\begin{align}&\operatorname{Pr}[\Theta\geq\theta^* \ | \ \Theta\geq\theta_{\operatorname{MCID}}] = \gamma\quad \wedge \quad \operatorname{Pr}_{\theta^*}[Z_n > 1.96] \geq 1 - \beta \\[1em] \Rightarrow\quad &\operatorname{Pr}\big[\underbrace{\operatorname{Pr}_\Theta[Z_n > 1.96]}_{\text{'random power'}} \geq 1 - \beta \ | \ \Theta\geq\theta_{\operatorname{MCID}} \big] = \gamma\end{align}$$
+* in words: *" When calculating sample size based on the $1-\gamma$ quantile of the prior conditional on a relevant effect such that the power at this point alternative is $1-\beta$, the probability that 'random power' exceeds $1-\beta$  is $\gamma$. "*
+
+* requires additional parameter $\gamma$, how to justify? Is median ( $\gamma=0.5$ ) ok?
+
+
+
+---
+class: inverse, middle, center
+# Probability of Success & Expected Power
+
+
+
+---
+## Probability of Success (1)
+
+* what constitutes a 'success' ?
+
+* surprisingly vague in the literature, 
+often needs to be reverse-engeneered from formula for 'probability of success'
+
+* common: 'success' := 'reject $\mathcal{H}_0$', i.e.
+\begin{align}
+\operatorname{PoS}'(n) :&= \operatorname{Pr}[Z_n > 1.96] \\ &= 
+    \int \operatorname{Pr}_\theta[Z_n > 1.96]\ \varphi(\theta) \operatorname{d} \theta
+\end{align}
+
+* integration includes the null hypothesis - **type-one errors are successes!**
+
+
+
+---
+background-image: url("images/greedy.jpg")
+background-size: contain
+## Greedy!
+
+
+---
+## Probability of Success (2)
+
+.pull-left[
+
+### 'greedy' definition: 
+
+'success' := 'reject $\mathcal{H}_0$'
+\begin{align}
+\operatorname{PoS}'(n) :&= \operatorname{Pr}[Z_n > 1.96] \\ &= 
+    \int \operatorname{Pr}_\theta[Z_n > 1.96] \varphi(\theta) \operatorname{d} \theta
+\end{align}
+
+]
+
+.pull-right[
+
+### long-term definition: 
+
+'success' := 'reject $\mathcal{H}_0$' **and** $\color{\red}{\Theta\geq\theta_{\operatorname{MCID}}}$
+\begin{align}
+\operatorname{PoS}(n) :&= \operatorname{Pr}[Z_n > 1.96, \color{\red}{\Theta\geq\theta_{\operatorname{MCID}}}] \\ 
+    &= \int_{\color{\red}{\theta_{\operatorname{MCID}}}} \operatorname{Pr}_\theta[Z_n > 1.96] \varphi(\theta) \operatorname{d} \theta
+\end{align}
+
+]
+
+<br />
+
+\begin{align}
+\operatorname{PoS}'(n) = \underbrace{\operatorname{Pr}[ Z_n > 1.96, \Theta \leq 0 ]}_{\text{probability of type-one error}} + \underbrace{\operatorname{Pr}[ Z_n > 1.96, 0 < \Theta < \theta_{\operatorname{MCID}} ]}_{\text{probability of irrelevant rejection}} + \operatorname{PoS}(n)
+\end{align}
+
+<br />
+
+**in practice,** $\operatorname{Pr}[ Z_n > 1.96, \Theta \leq 0 ]$ small due to strict type-one error rate control at $\alpha$ and most prior mass in $\mathcal{H}_0$ concentrated on $\theta_0$.
+
+
+
+---
+## Probability of Success (3)
+
+* critically depends on definition of 'success'
+
+* numerical difference between $\operatorname{PoS}(n)$ and $\operatorname{PoS}'(n)$ mostly negligible in practice (but not always) [1]
+
+* remember: if you go with $\operatorname{PoS}'(n)$, type-one errors are successes!
+
+* pick carefully, be explicit, justify!
+
+.footnote[
+[1] https://arxiv.org/abs/2006.15715
+]
+
+
+
+---
+## Sample Size Calculation with PoS
+
+* idea: determine $n$ such that $\operatorname{PoS}(n) = 1-\beta$
+
+* note that
+
+\begin{align}
+    \operatorname{PoS}(n) =& \operatorname{Pr}[ Z_n > 1.96, \Theta \geq \theta_{\operatorname{MCID}} ] \\[1em]
+           =& \operatorname{Pr}[ Z_n > 1.96 \ | \ \Theta \geq \theta_{\operatorname{MCID}}] \ \operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}} ] \\[1em]
+           \leq& \operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}} ]
+\end{align}
+
+* **problem:** what if $1 -\beta > \operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}}] \leadsto n = ? \quad \large\unicode{x21af}$
+
+* **solutions:**
+
+    1. either re-scale usual $1-\beta$ to make it problem-specific (how?) ...
+    
+    2. ... or re-scale $\operatorname{PoS}(n)$ to $[0,1]$
+
+
+
+---
+## Enter: Expected Power
+
+* luckily, there is a natural way to re-scale $\operatorname{PoS}(n)$ to $[0,1]$
+
+\begin{align}
+    \operatorname{PoS}(n) =&\ \operatorname{Pr}[ Z_n > 1.96 \ | \ \Theta \geq \theta_{\operatorname{MCID}}] \ \operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}} ] \\[1.25em]
+\Leftrightarrow\quad \underbrace{\operatorname{PoS}(n) / \operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}} ]}_{\in[0,1]} =&\ \operatorname{Pr}[ Z_n > 1.96 \ | \ \Theta \geq \theta_{\operatorname{MCID}}] \\
+           =&\ \operatorname{E}\big[ \underbrace{\operatorname{Pr}_\Theta[Z_n > 1.96] \ | \ \Theta \geq \theta_{\operatorname{MCID}}}_{\text{'random power'}} \big] \\
+           =:&\ \operatorname{EP}(n)
+\end{align}
+
+* $\operatorname{EP}(n)$ is 'expected power' and $\operatorname{PoS}(n) = \operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}} ] \ \operatorname{EP}(n)$
+
+* joint probability of rejection and relevant effect $\operatorname{PoS}(n)$ vs. conditional probability of rejection given relevant effect $\operatorname{EP}(n)$
+
+
+---
+## Just a Different Weight Function...
+
+\begin{align}
+    &\operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}} ] \ \operatorname{EP}(n) \\[1em]
+    &= \operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}} ] \ \int_{\theta_{\operatorname{MCID}}} \operatorname{Pr}_\theta[Z_n > 1.96] \ \varphi(\theta \ | \Theta \geq \theta_{\operatorname{MCID}}) \operatorname{d} \theta \\[1em]
+        &= \int_{\theta_{\operatorname{MCID}}} \operatorname{Pr}_\theta[Z_n > 1.96] \ \underbrace{\operatorname{Pr}[ \Theta \geq \theta_{\operatorname{MCID}} ] \ \varphi(\theta \ | \Theta \geq \theta_{\operatorname{MCID}})}_{\varphi(\theta)} \operatorname{d} \theta \\[1em]
+        &= \operatorname{PoS}(n)
+\end{align}
+
+
+
+---
+class: inverse, middle, center
+## Example
+
+
+
+---
+## Single-Arm, Survival Endpoint
+
+```{r, echo=FALSE}
+prior       <- Normal(0.2, 0.2, -0.3, 0.7)
+theta_null  <- 0.000
+theta_mcid  <- 0.050
+alpha       <- 0.025
+beta        <- 0.200
+```
+
+* effect on **hazard ratio** scale $\operatorname{HR} = \exp(-\theta)$
+
+* $\operatorname{HR}_{\operatorname{MCID}} = `r round(exp(-theta_mcid), 2)`$, $\operatorname{HR}_0 = `r round(exp(-theta_null), 2)`$
+
+* $\alpha=`r alpha`, \beta = `r beta`$
+
+```{r, echo=FALSE, dpi=300, fig.height=4, fig.width=10, out.width="100%"}
+tranformed_prior_pdf <- function(hr) {
+    pdf(prior, -log(hr))/hr
+}
+# plot the prior pdf
+plt_prior <- tibble(
+        `hazard ratio` = seq(0.4, 1.4, .001),
+        `prior PDF` = tranformed_prior_pdf(`hazard ratio`) %>%
+            {ifelse((abs(`hazard ratio` - exp(-0.7)) < 0.001) | (abs(`hazard ratio` - exp(0.3)) < 0.001), NA_real_, .)}
+    ) %>%
+    ggplot() +
+    aes(`hazard ratio`, `prior PDF`) +
+    geom_vline(xintercept = 1) +
+    geom_line() +
+    scale_x_continuous("hazard ratio", breaks = seq(0.4, 1.4, by = 0.2)) +
+    theme_bw() +
+    theme(
+        legend.position = "top"
+    )
+# compute required sample sizes
+tbl_samplesizes <- tibble(
+        "MCID" = get_n(theta_null, theta_mcid),
+        "EP"   = get_n_ep(theta_null, prior, mrv = theta_mcid, pwr = 1 - beta, alpha = alpha),
+        "quantile, 0.9"   = get_n_quantile(theta_null, prior, .9, mrv = theta_mcid, pwr = 1 - beta, alpha = alpha),
+        "quantile, 0.5"   = get_n_quantile(theta_null, prior, .5, mrv = theta_mcid, pwr = 1 - beta, alpha = alpha)
+    ) %>%
+    pivot_longer(everything(), names_to = "type", values_to = "n")
+# plot power curves
+plt_powr_curves <- full_join(
+        tbl_samplesizes,
+        expand_grid(
+            theta = seq(-0.2, 0.7, by = 0.01),
+            n = tbl_samplesizes$n
+        ),
+        by = "n"
+    ) %>%
+    mutate(
+        `hazard ratio` = exp(-theta),
+        power = map2_dbl(theta, n, ~power(..1, ..2, qnorm(1 - alpha))),
+        name = sprintf("%s (n = %i)", type, n)
+    ) %>%
+    ggplot() +
+        aes(`hazard ratio`, power, color = name) +
+        geom_line() +
+        scale_color_discrete("") +
+        # scale_x_continuous("hazard ratio", breaks = seq(-1, 1, .1)) +
+        scale_y_continuous("probability to reject", breaks = seq(0, 1, .1), expand = c(0, 0)) +
+        theme_bw() +
+        theme(
+            panel.grid.minor = element_blank(),
+            legend.position = "top"
+        )
+n <- 1e5
+rtheta <- numeric(n)
+cprior <- condition(prior, lo = theta_mcid)
+i <- 1
+while (i < n) {
+    sample <- rnorm(1, mean = cprior$mu, sd = cprior$tau)
+    if (between(sample, cprior$lower, cprior$upper)) {
+        rtheta[i] <- sample
+        i <- i + 1
+    }
+}
+plt_power_cdf <- full_join(
+        tbl_samplesizes,
+        expand_grid(
+            rtheta = rtheta,
+            n = tbl_samplesizes$n
+        ),
+        by = "n"
+    ) %>%
+    mutate(
+        rpower = map2_dbl(rtheta, n, ~power(..1, ..2, qnorm(1 - alpha))),
+        name = sprintf("%s (n = %i)", type, n)
+    ) %>%
+    select(name, rpower) %>%
+    group_by(name) %>%
+    nest() %>%
+    transmute(
+        ecdf = map(data, ~tibble(
+            power = seq(0, 1, .01),
+            CDF   = ecdf(.$rpower)(power)
+        ))
+    ) %>%
+    unnest(ecdf) %>%
+    ggplot(aes(power, CDF, color = name)) +
+    geom_line() +
+    scale_color_discrete("") +
+    scale_x_continuous("random power", breaks = seq(0, 1, .1)) +
+    scale_y_continuous(breaks = seq(0, 1, .1)) +
+    coord_cartesian(expand = FALSE) +
+    theme_bw() +
+    theme(
+        panel.grid.minor = element_blank(),
+        legend.position = "top"
+    )
+legend <- cowplot::get_legend(plt_powr_curves)
+cowplot::plot_grid(
+    legend,
+    cowplot::plot_grid(
+        plt_prior,
+        plt_powr_curves + theme(legend.position = "none"),
+        plt_power_cdf + theme(legend.position = "none"),
+        nrow = 1,
+        align = "h",
+        axis = "bt"
+    ),
+    rel_heights = c(1, 8),
+    ncol = 1
+)
+```
+
+
+---
+## Expected Power and Pos vs n
+
+```{r, echo=FALSE, dpi=300, out.width="100%", fig.height=4}
+tbl_n <- tibble(
+        "MCID" = get_n(theta_null, theta_mcid),
+        "EP"   = get_n_ep(theta_null, prior, mrv = theta_mcid, pwr = 1 - beta, alpha = alpha),
+        "quantile, 0.9"   = get_n_quantile(theta_null, prior, .9, mrv = theta_mcid, pwr = 1 - beta, alpha = alpha),
+        "quantile, 0.5"   = get_n_quantile(theta_null, prior, .5, mrv = theta_mcid, pwr = 1 - beta, alpha = alpha)
+    ) %>%
+    pivot_longer(everything(), names_to = "type", values_to = "n") %>%
+    mutate(value = c(.5, .55, .5, .5))
+
+tibble(
+        n   = seq(100, 3500, length.out = 100),
+        PoS = map_dbl(n, ~PoS(prior, ., crit, mrv = theta_mcid)),
+        EP  = map_dbl(n, ~EP(prior, ., crit, mrv = theta_mcid))
+    ) %>%
+    pivot_longer(-n) %>%
+    ggplot(aes(n, value)) + 
+        geom_vline(
+            aes(xintercept = n),
+            data = tbl_n
+        ) +
+        geom_text(
+            aes(n, value, label = type),
+            hjust = 0,
+            nudge_x = 25,
+            data = tbl_n
+        ) +
+        geom_line(aes(color = name)) +
+        theme_minimal() + 
+        xlab("") +
+        scale_color_discrete("") +
+        theme(legend.position = "top", panel.grid.minor = element_blank())
+```
+
+
+
+---
+## Shiny/Code/Pre-Print
+
+.pull-left[ 
+
+<div id="wrap">
+<iframe 
+    id="scaled-frame"
+    src="https://mybinder.org/v2/gh/kkmann/sample-size-calculation-under-uncertainty/master?urlpath=shiny/apps/sample-size-calculation-under-uncertainty/"
+></iframe> 
+</div>
+
+]
+
+.pull-right[
+
+* pre-print: [https://arxiv.org/abs/2006.15715]
+
+* code: [https://github.com/kkmann/sample-size-calculation-under-uncertainty]
+
+* [![badge](https://img.shields.io/badge/Shiny-latest-579ACA.svg?logo=data:image/png;base64,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)](https://mybinder.org/v2/gh/kkmann/sample-size-calculation-under-uncertainty/master?urlpath=shiny/apps/sample-size-calculation-under-uncertainty/)
+ 
+* follow-up: predictive power and sample size recalculation [https://arxiv.org/abs/2010.06567]
+ 
+]
+
+
+
+---
+## Summary
+
+* 'Bayesian' choice of $\theta_{alt}$ not straight-forward: power function is non-linear!
+
+* 'quantile approach' is principled and simple to implement but requires additional parameter $\gamma$, confusing!
+
+* definition of 'probability of success' is treacherous, not suitable for sample size calculation!
+
+* 'expected power' is natural extension of power calculation to situation with prior information 
+
+* 'hybrid' methods make distinction between 'likely' & 'relevant' effects transparent
+
+* Bayes Theorem not  used - relevant when looking at **interim adaptations** [1]
+
+* **no magic bullet** but consistent framework for incorporating uncertainty!
+
+.footnote[
+[1] https://arxiv.org/abs/2010.06567
+]
+
+
+
+---
+class: center, middle
+
+## Thanks!
+
+![](iph.jpg)
+
+[**www.mrc-bsu.cam.ac.uk**](www.mrc-bsu.cam.ac.uk)
+
+[**@kevin_kunzmann**](https://twitter.com/kevin_kunzmann)
+
+Slides created with the R package [**xaringan**](https://github.com/yihui/xaringan).
